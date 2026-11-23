@@ -1,53 +1,60 @@
 # Arquitectura del simulador de SO
 
-> Borrador para acordar con el grupo. Todo lo marcado como **(a acordar)** debe decidirse en la primera reunión y luego quedar fijo aquí.
+> Borrador para acordar con el grupo. Todo lo marcado como **(a acordar)** debe decidirse en la reunión y luego quedar fijo aquí.
 
-## 1. Objetivo
+## 1. Objetivo y requisitos del profesor
 
-Simular un sistema operativo que realiza **gestión de procesos** y **gestión de memoria** de forma **transaccional** (cada paso y cambio de estado queda registrado en el log). Los algoritmos de gestión **no se llaman directamente**: se ejecutan como respuesta a **interrupciones**.
+Emular un sistema operativo en dos niveles, **gestión de procesos** y **gestión de memoria**, aplicando los algoritmos vistos en clase y mostrando cada paso **en tiempo real** (no solo el resultado final). Conceptos que deben verse: estados, scheduler, dispatcher, interrupciones, PCB, cambios de contexto, frames.
+
+Requisitos que condicionan el diseño:
+
+- Algoritmos de planificación: **FCFS, SJF y Round Robin**.
+- Memoria con **paginación**: lista de frames con registro inicial, registro final, proceso (o `SO` si no hay proceso) y estado de ese proceso.
+- Línea de tiempo con todos los procesos, sus estados y cómo cada interrupción encaja en el tiempo.
+- Mostrar cada PCB y el total de cambios de contexto; mostrar métricas.
+- Cada interrupción se muestra con su **tipo** (división entre cero, E/S, etc.).
+- Todo configurable y explicable: el grupo debe dominar qué cambia en cada combinación de configuración.
+- Entrega con documento de **cómo correr el programa** y **manual de uso**.
+- Opcional: varios procesadores.
 
 ## 2. Estructura del proyecto
 
 ```
 src/
-  kernel/       interrupts.py, transaction_log.py (+ reloj del sistema)
-  processes/    PCB, gestor de procesos, planificadores
-  memory/       gestor de memoria, tabla de páginas, reemplazo de páginas
-  ui/           visualización del log y del estado del sistema
-  main.py       punto de entrada y escenarios de prueba
-docs/           documentación (este archivo, manuales)
+  kernel/       interrupts.py, transaction_log.py, reloj, configuración
+  processes/    pcb.py, dispatcher.py, schedulers/ (fcfs, sjf, rr)
+  memory/       paginación, mapa de frames, reemplazo (fifo, lru)
+  metrics/      cálculo de métricas y línea de tiempo desde los eventos
+  ui/           interfaz en vivo
+  main.py       punto de entrada
+docs/           arquitectura, manual de uso, cómo ejecutar, matriz de pruebas
 tests/          pruebas
 ```
 
 ## 3. Flujo general
 
 1. El **reloj** avanza un `tick` a la vez.
-2. Los módulos (CPU simulada, E/S, memoria, usuario) **levantan interrupciones** con `raise_int(tick, tipo, **payload)`.
-3. El `InterruptController` las guarda en una cola con prioridad y las atiende con `dispatch_all(tick)`, llamando al **manejador** registrado para cada tipo.
-4. Cada manejador ejecuta el algoritmo correspondiente (planificar, reemplazar página, etc.) y **registra cada paso en el log**.
+2. Los módulos (CPU simulada, E/S, memoria, escenario) **levantan interrupciones** con `raise_int(tick, tipo, **payload)`.
+3. El `InterruptController` las guarda en una cola con prioridad y las atiende con `dispatch_all(tick)`, llamando al **manejador** de cada tipo.
+4. Cada manejador ejecuta el algoritmo correspondiente y **registra cada paso en el log estructurado**.
+5. La **UI y las métricas se suscriben al log** y se actualizan en vivo con cada evento.
 
-## 3.1 Convención de manejadores
-
-```python
-def handler(tick, **payload):
-    ...
-```
-
-Registro: `controller.register(IntType.TIMER, handler)`.
+Manejadores: `handler(tick, **payload)`. Registro: `controller.register(IntType.TIMER, handler)`.
 
 ## 4. Interrupciones
 
-Número menor = mayor prioridad.
+Número menor = mayor prioridad **(prioridades a acordar)**. Si llega una interrupción sin manejador registrado, queda en el log como `INT_SIN_MANEJADOR`.
 
-| Tipo | Prioridad | Quién la levanta | Quién la atiende | Payload |
-|------|-----------|------------------|------------------|---------|
-| `PAGE_FAULT` | 1 | Memoria (acceso a página ausente) | Gestor de memoria | `pid`, `page` |
-| `IO_COMPLETE` | 2 | Dispositivo de E/S simulado | Gestor de procesos | `pid` |
-| `TIMER` | 3 | Reloj (fin de quantum) | Planificador | — |
-| `SIGNAL` | 4 | Usuario / escenario | Gestor de procesos | `pid`, `signal` (`KILL`, `STOP`, `CONT`) |
-| `PROCESS_END` | **(a acordar)** | CPU simulada (ráfaga terminada) | Gestor de procesos | `pid` |
-
-> `PROCESS_END` aún no existe en `IntType`; quien lo necesite lo agrega con un PR pequeño.
+| Tipo | Nombre mostrado | Origen | Efecto principal |
+|------|-----------------|--------|------------------|
+| `DIV_ZERO` (1) | División entre cero | Proceso en ejecución | El proceso pasa a TERMINADO |
+| `PAGE_FAULT` (2) | Fallo de página | Memoria | El proceso pasa a BLOQUEADO mientras se carga la página |
+| `IO_COMPLETE` (3) | Fin de E/S | Dispositivo (también carga de página) | El proceso pasa de BLOQUEADO a LISTO |
+| `IO_REQUEST` (4) | Solicitud de E/S | Proceso en ejecución | El proceso pasa a BLOQUEADO |
+| `PROCESS_END` (5) | Fin de proceso | CPU (ráfaga terminada) | El proceso pasa a TERMINADO y se libera su memoria |
+| `TIMER` (6) | Fin de quantum | Reloj | Round Robin expulsa al proceso (EJECUCION a LISTO) |
+| `PROCESS_ARRIVAL` (7) | Llegada de proceso | Escenario | NUEVO a LISTO y se reevalúa el scheduler |
+| `SIGNAL` (8) | Señal | Usuario / escenario | `KILL`, `STOP`, `CONT` |
 
 ## 5. Procesos
 
@@ -58,70 +65,112 @@ Número menor = mayor prioridad.
 | `pid` | Identificador único |
 | `estado` | Ver 5.2 |
 | `prioridad` | Entero (menor = más importante) |
-| `tiempo_llegada` | Tick en que llega al sistema |
-| `rafaga_cpu` | Tiempo total de CPU requerido |
-| `rafaga_restante` | Tiempo de CPU que falta |
-| `paginas_necesarias` | Cantidad de páginas que usa |
-| `tabla_paginas` | Mapa página → marco (o ausente) |
+| `llegada` | Tick de llegada |
+| `rafaga_cpu` / `rafaga_restante` | CPU total y pendiente |
+| `eventos_es` | Lista de (tick de CPU en que pide E/S, duración) |
+| `paginas` | Cantidad de páginas que usa |
+| `tabla_paginas` | Página a frame (o ausente) |
+| `primera_ejecucion` | Tick en que corrió por primera vez (tiempo de respuesta) |
+| `fin` | Tick en que terminó |
+| `espera` | Tiempo acumulado en LISTO |
 
-### 5.2 Estados
+### 5.2 Estados y transiciones
 
-`NUEVO → LISTO → EJECUCION → TERMINADO`, con `EJECUCION → BLOQUEADO → LISTO` (E/S) y `EJECUCION → LISTO` (fin de quantum).
+| Transición | Causa |
+|------------|-------|
+| NUEVO a LISTO | `PROCESS_ARRIVAL` |
+| LISTO a EJECUCION | Dispatcher (elegido por el scheduler) |
+| EJECUCION a LISTO | `TIMER` (RR) o expropiación |
+| EJECUCION a BLOQUEADO | `IO_REQUEST` o `PAGE_FAULT` |
+| BLOQUEADO a LISTO | `IO_COMPLETE` |
+| EJECUCION a TERMINADO | `PROCESS_END`, `DIV_ZERO` o `SIGNAL KILL` |
 
-Toda transición se registra en el log, por ejemplo: `P3 pasa de EJECUCION a LISTO`.
+Opcional **(a acordar)**: estado SUSPENDIDO para `SIGNAL STOP` / `CONT`.
 
-### 5.3 Planificador (interfaz común)
+### 5.3 Scheduler y dispatcher (roles separados)
+
+- **Scheduler**: *decide* qué proceso sigue. Interfaz común: `agregar(pcb)` y `siguiente()`.
+- **Dispatcher**: *ejecuta* el cambio. Guarda el contexto del proceso saliente, carga el del entrante, **incrementa el contador de cambios de contexto** y registra el evento `CAMBIO_CONTEXTO`.
+
+Algoritmos: **FCFS**, **SJF** (no expropiativo; SRTF opcional, a acordar) y **Round Robin** (quantum configurable).
+
+## 6. Memoria (paginación)
+
+Parámetros configurables **(valores a acordar)**:
+
+- `N` frames y tamaño de página/frame `T`.
+- `K` frames reservados para el SO (siempre ocupados por `SO`).
+- Algoritmo de reemplazo: FIFO y LRU (confirmar con los apuntes de clase si se vio otro).
+- Costo de carga de página (ticks): el proceso queda BLOQUEADO y la carga termina con `IO_COMPLETE`.
+
+El frame `i` ocupa las direcciones `[i*T, (i+1)*T - 1]`. El **mapa de frames** se muestra siempre así:
+
+| Frame | Inicio | Fin | Proceso | Página | Estado del proceso |
+|-------|--------|-----|---------|--------|--------------------|
+| 0 | 0 | T-1 | SO | - | - |
+| 4 | 4T | 5T-1 | P2 | 3 | EJECUCION |
+| 5 | 5T | 6T-1 | SO (libre) | - | - |
+
+API del gestor de memoria:
 
 ```python
-class Scheduler:
-    def agregar(self, pcb): ...
-    def siguiente(self): ...   # devuelve el PCB a ejecutar o None
+acceder(tick, pid, pagina)   # si la página no está cargada, levanta PAGE_FAULT
+liberar(tick, pid)           # libera los frames del proceso (se llama al terminar)
+mapa_frames()                # lista de filas como la tabla anterior
 ```
 
-Algoritmos a implementar: Round Robin (obligatorio), más uno o dos a elegir **(a acordar)**: SJF, prioridades.
+## 7. Log estructurado
 
-## 6. Memoria
+Cada paso es un `Evento` con: `n`, `tick`, `componente`, `mensaje`, `evento` (tipo), `pid`, `antes`, `despues` y `datos`. La línea de texto se genera a partir del evento: `[#007 t=012] SCHED  P3 pasa de EJECUCION a LISTO`.
 
-Parámetros **(a acordar)**:
+Tipos de evento **(a acordar la lista final)**: `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
 
-- Número de marcos: `N`
-- Tamaño de página: `T`
-- Algoritmo de reemplazo: FIFO primero, luego LRU
+Nadie usa `print` directamente: todo pasa por `TransactionLog.log`. La UI y las métricas usan `log.subscribe(callback)` para recibir los eventos en vivo.
 
-API que expone el gestor de memoria:
+## 8. Interfaz en vivo
 
-```python
-acceder(tick, pid, pagina)   # si la página no está, levanta PAGE_FAULT
-liberar(tick, pid)           # libera los marcos del proceso
-```
+Vistas obligatorias, actualizadas en tiempo real:
 
-El manejador de `PAGE_FAULT` carga la página, elige víctima si no hay marcos libres y actualiza las tablas de páginas, **registrando cada paso**.
+1. **Mapa de frames** (tabla de la sección 6).
+2. **Línea de tiempo** con todos los procesos, su estado en cada tick y las interrupciones marcadas con su tipo.
+3. **Tabla de PCB** de todos los procesos.
+4. **Métricas** y contador de cambios de contexto.
+5. **Log** paso a paso.
 
-## 7. Formato del log transaccional
+Controles: elegir algoritmo, quantum, `N`, `T`, reemplazo y escenario; iniciar, pausar, paso a paso y velocidad. Tecnología **(a acordar)**.
 
-```
-[#001 t=001] COMPONENTE mensaje
-```
+## 9. Métricas
 
-Ejemplo: `[#007 t=012] SCHED      P3 pasa de EJECUCION a LISTO`.
+Por proceso: tiempo de espera, de retorno y de respuesta. Globales: promedios, uso de CPU, rendimiento (procesos por unidad de tiempo), cambios de contexto, fallos de página.
 
-Cada decisión o cambio de estado va en su propia línea. Nadie imprime con `print` directamente: todo pasa por `TransactionLog.log`.
+## 10. Configuración y escenarios
 
-## 8. Escenarios de prueba
+Parámetros: algoritmo de planificación, quantum, `N`, `T`, `K`, reemplazo, costo de carga de página y número de CPUs (1 por ahora; la CPU debe ser un objeto para poder sumar más sin reescribir). Escenario: lista de procesos (`pid`, llegada, ráfaga, prioridad, páginas, eventos de E/S, instrucción de error opcional) y señales programadas. Formato **(a acordar: JSON o Python)**.
 
-Archivo con la lista de procesos de entrada (`pid`, llegada, ráfaga, prioridad, páginas) y, opcionalmente, señales programadas por tick. **(a acordar el formato: JSON o Python)**.
+## 11. Matriz de pruebas
 
-## 9. Convenciones de trabajo
+Mantener `docs/combinaciones.md`: para cada combinación (algoritmo x quantum x memoria x reemplazo x escenario) anotar qué cambia en tiempos, estados, fallos de página y cambios de contexto. Cada integrante debe poder explicarla.
 
-- Una rama por tarea: `feature/...`, `fix/...`, `docs/...`.
-- Commits con prefijo: `feat:`, `fix:`, `docs:`, `chore:`.
-- Pull Request pequeño, con revisión de otro integrante antes del *Squash and merge*.
-- Antes de empezar cada sesión: `git checkout main` y `git pull origin main`.
+## 12. Entregables
 
-## 10. Decisiones abiertas
+- `README.md` con cómo instalar y ejecutar paso a paso.
+- Manual de uso (documento adjunto).
+- Programa que corra con una sola instrucción documentada.
 
-- [ ] Prioridad de `PROCESS_END` en `IntType`
-- [ ] Algoritmos de planificación adicionales
-- [ ] Valores de `N` (marcos) y `T` (tamaño de página)
-- [ ] Formato del archivo de escenarios
-- [ ] Tecnología de la UI (consola o gráfica)
+## 13. Convenciones de trabajo
+
+- Una rama por tarea: `feature/N-descripcion`, `fix/...`, `docs/...`.
+- Commits con prefijo `feat:`, `fix:`, `docs:`, `chore:`.
+- Pull Request pequeño con revisión de otro integrante y `Closes #N` en la descripción.
+- Antes de empezar: `git checkout main` y `git pull origin main`.
+
+## 14. Decisiones abiertas
+
+- [ ] Prioridades finales de las interrupciones
+- [ ] SJF no expropiativo, SRTF o ambos
+- [ ] Valores de `N`, `T`, `K` y costo de carga de página
+- [ ] Algoritmos de reemplazo (FIFO, LRU, otro visto en clase)
+- [ ] Estado SUSPENDIDO para STOP/CONT
+- [ ] Formato de escenarios
+- [ ] Tecnología de la UI
+- [ ] Soporte de varios procesadores (opcional)
