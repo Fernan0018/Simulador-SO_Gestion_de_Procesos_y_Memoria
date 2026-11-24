@@ -97,4 +97,4 @@ tests/          pruebas
 
 ## Curso
 
-*SI421U Arquitectura de Computador y Sistemas Operativos, Profesor Carlos Nelson Ramos Montes, Ciclo 2026-II*
+*SI421U Arquitectura de Computador y Sistemas Operativos, Profesor: Carlos Nelson Ramos Montes, Ciclo 2026-II*
