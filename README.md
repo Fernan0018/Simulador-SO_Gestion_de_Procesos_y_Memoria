@@ -82,11 +82,11 @@ tests/          pruebas
 
 | Integrante | Rol / módulo |
 |------------|--------------|
-| Fernando | *(por definir)* |
-| *(nombre)* | *(por definir)* |
-| *(nombre)* | *(por definir)* |
-| *(nombre)* | *(por definir)* |
-| *(nombre)* | *(por definir)* |
+| *Fernando* | *(por definir)* |
+| *Percy* | *(por definir)* |
+| *Rodrigo* | *(por definir)* |
+| *Angel* | *(por definir)* |
+| *Paolo* | *(por definir)* |
 
 ## Cómo trabajamos
 
@@ -97,4 +97,4 @@ tests/          pruebas
 
 ## Curso
 
-*(Nombre del curso, sección, docente y ciclo académico.)*
+*SI421U Arquitectura de Computador y Sistemas Operativos, Profesor: Carlos Nelson Ramos Montes, Ciclo 2026-II*
