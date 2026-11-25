@@ -1,6 +1,6 @@
 # Arquitectura del simulador de SO
 
-> Borrador para acordar con el grupo. Todo lo marcado como **(a acordar)** debe decidirse en la reunión y luego quedar fijo aquí.
+> Decisiones acordadas por el grupo (noviembre 2026). Los valores de este documento quedan fijos; cualquier cambio posterior se hace por Pull Request.
 
 ## 1. Objetivo y requisitos del profesor
 
@@ -43,7 +43,7 @@ Manejadores: `handler(tick, **payload)`. Registro: `controller.register(IntType.
 
 ## 4. Interrupciones
 
-Número menor = mayor prioridad **(prioridades a acordar)**. Si llega una interrupción sin manejador registrado, queda en el log como `INT_SIN_MANEJADOR`.
+Número menor = mayor prioridad (prioridades acordadas por el grupo). Si llega una interrupción sin manejador registrado, queda en el log como `INT_SIN_MANEJADOR`.
 
 | Tipo | Nombre mostrado | Origen | Efecto principal |
 |------|-----------------|--------|------------------|
@@ -84,24 +84,26 @@ Número menor = mayor prioridad **(prioridades a acordar)**. Si llega una interr
 | EJECUCION a BLOQUEADO | `IO_REQUEST` o `PAGE_FAULT` |
 | BLOQUEADO a LISTO | `IO_COMPLETE` |
 | EJECUCION a TERMINADO | `PROCESS_END`, `DIV_ZERO` o `SIGNAL KILL` |
+| LISTO o EJECUCION a SUSPENDIDO | `SIGNAL STOP` |
+| SUSPENDIDO a LISTO | `SIGNAL CONT` |
 
-Opcional **(a acordar)**: estado SUSPENDIDO para `SIGNAL STOP` / `CONT`.
+El estado SUSPENDIDO queda incluido (acordado) para las señales `STOP` / `CONT`.
 
 ### 5.3 Scheduler y dispatcher (roles separados)
 
 - **Scheduler**: *decide* qué proceso sigue. Interfaz común: `agregar(pcb)` y `siguiente()`.
 - **Dispatcher**: *ejecuta* el cambio. Guarda el contexto del proceso saliente, carga el del entrante, **incrementa el contador de cambios de contexto** y registra el evento `CAMBIO_CONTEXTO`.
 
-Algoritmos: **FCFS**, **SJF** (no expropiativo; SRTF opcional, a acordar) y **Round Robin** (quantum configurable).
+Algoritmos: **FCFS**, **SJF** (no expropiativo; SRTF opcional si sobra tiempo) y **Round Robin** (quantum configurable).
 
 ## 6. Memoria (paginación)
 
-Parámetros configurables **(valores a acordar)**:
+Parámetros configurables (valores por defecto acordados; todos se pueden cambiar desde la configuración):
 
-- `N` frames y tamaño de página/frame `T`.
-- `K` frames reservados para el SO (siempre ocupados por `SO`).
-- Algoritmo de reemplazo: FIFO y LRU (confirmar con los apuntes de clase si se vio otro).
-- Costo de carga de página (ticks): el proceso queda BLOQUEADO y la carga termina con `IO_COMPLETE`.
+- `N` = 16 frames y tamaño de página/frame `T` = 4.
+- `K` = 2 frames reservados para el SO (siempre ocupados por `SO`).
+- Algoritmo de reemplazo: FIFO y LRU.
+- Costo de carga de página = 2 ticks: el proceso queda BLOQUEADO y la carga termina con `IO_COMPLETE`.
 
 El frame `i` ocupa las direcciones `[i*T, (i+1)*T - 1]`. El **mapa de frames** se muestra siempre así:
 
@@ -123,7 +125,7 @@ mapa_frames()                # lista de filas como la tabla anterior
 
 Cada paso es un `Evento` con: `n`, `tick`, `componente`, `mensaje`, `evento` (tipo), `pid`, `antes`, `despues` y `datos`. La línea de texto se genera a partir del evento: `[#007 t=012] SCHED  P3 pasa de EJECUCION a LISTO`.
 
-Tipos de evento **(a acordar la lista final)**: `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
+Tipos de evento (lista inicial; se puede ampliar por Pull Request si hace falta): `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
 
 Nadie usa `print` directamente: todo pasa por `TransactionLog.log`. La UI y las métricas usan `log.subscribe(callback)` para recibir los eventos en vivo.
 
@@ -137,7 +139,7 @@ Vistas obligatorias, actualizadas en tiempo real:
 4. **Métricas** y contador de cambios de contexto.
 5. **Log** paso a paso.
 
-Controles: elegir algoritmo, quantum, `N`, `T`, reemplazo y escenario; iniciar, pausar, paso a paso y velocidad. Tecnología **(a acordar)**.
+Controles: elegir algoritmo, quantum, `N`, `T`, reemplazo y escenario; iniciar, pausar, paso a paso y velocidad. Tecnología: **Tkinter** (acordado).
 
 ## 9. Métricas
 
@@ -145,7 +147,7 @@ Por proceso: tiempo de espera, de retorno y de respuesta. Globales: promedios, u
 
 ## 10. Configuración y escenarios
 
-Parámetros: algoritmo de planificación, quantum, `N`, `T`, `K`, reemplazo, costo de carga de página y número de CPUs (1 por ahora; la CPU debe ser un objeto para poder sumar más sin reescribir). Escenario: lista de procesos (`pid`, llegada, ráfaga, prioridad, páginas, eventos de E/S, instrucción de error opcional) y señales programadas. Formato **(a acordar: JSON o Python)**.
+Parámetros: algoritmo de planificación, quantum, `N`, `T`, `K`, reemplazo, costo de carga de página y número de CPUs (1, acordado por ahora; la CPU debe ser un objeto para poder sumar más sin reescribir). Escenario: lista de procesos (`pid`, llegada, ráfaga, prioridad, páginas, eventos de E/S, instrucción de error opcional) y señales programadas. Formato: **JSON** (acordado).
 
 ## 11. Matriz de pruebas
 
@@ -164,13 +166,13 @@ Mantener `docs/combinaciones.md`: para cada combinación (algoritmo x quantum x 
 - Pull Request pequeño con revisión de otro integrante y `Closes #N` en la descripción.
 - Antes de empezar: `git checkout main` y `git pull origin main`.
 
-## 14. Decisiones abiertas
+## 14. Decisiones tomadas
 
-- [ ] Prioridades finales de las interrupciones
-- [ ] SJF no expropiativo, SRTF o ambos
-- [ ] Valores de `N`, `T`, `K` y costo de carga de página
-- [ ] Algoritmos de reemplazo (FIFO, LRU, otro visto en clase)
-- [ ] Estado SUSPENDIDO para STOP/CONT
-- [ ] Formato de escenarios
-- [ ] Tecnología de la UI
-- [ ] Soporte de varios procesadores (opcional)
+- [x] Prioridades de las interrupciones: las de la sección 4
+- [x] SJF no expropiativo (SRTF opcional si sobra tiempo)
+- [x] `N` = 16, `T` = 4, `K` = 2 y costo de carga de página = 2 ticks
+- [x] Reemplazo de páginas: FIFO y LRU
+- [x] Estado SUSPENDIDO para STOP/CONT
+- [x] Formato de escenarios: JSON
+- [x] Tecnología de la UI: Tkinter
+- [x] Varios procesadores: no por ahora (opcional, la CPU queda como objeto)
