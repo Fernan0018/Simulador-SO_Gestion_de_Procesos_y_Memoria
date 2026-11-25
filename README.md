@@ -82,11 +82,11 @@ tests/          pruebas
 
 | Integrante | Rol / módulo |
 |------------|--------------|
-| *Fernando* | *(por definir)* |
-| *Percy* | *(por definir)* |
-| *Rodrigo* | *(por definir)* |
-| *Angel* | *(por definir)* |
-| *Paolo* | *(por definir)* |
+| Fernando | Núcleo: PCB y estados, reloj y manejadores |
+| Percy | Planificación: FCFS, SJF y Round Robin, dispatcher y cambios de contexto |
+| Rodrigo | Interfaz en vivo y manual de uso |
+| Angel | Memoria: paginación, mapa de frames, FIFO y LRU |
+| Paolo | Escenarios y configuración, métricas y matriz de combinaciones |
 
 ## Cómo trabajamos
 
