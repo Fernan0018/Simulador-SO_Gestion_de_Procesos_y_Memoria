@@ -59,3 +59,19 @@ class InterruptController:
                              evento="INT_SIN_MANEJADOR", tipo=irq.kind.name)
                 continue
             handler(tick, **irq.payload)
+
+    def descartar(self, tick, pid, tipos):
+        """Quita de la cola las interrupciones pendientes de `pid` de esos tipos
+        (p. ej. al hacer KILL). Devuelve cuántas descartó."""
+        quedan = [i for i in self.queue
+                  if not (i.payload.get("pid") == pid and i.kind in tipos)]
+        quitadas = [i for i in self.queue
+                    if i.payload.get("pid") == pid and i.kind in tipos]
+        if quitadas:
+            self.queue[:] = quedan
+            heapq.heapify(self.queue)
+            for irq in sorted(quitadas):
+                self.log.log(tick, "INT",
+                             f"{NOMBRES[irq.kind]} ({irq.kind.name}) de P{pid} descartada",
+                             evento="INT_DESCARTADA", tipo=irq.kind.name, pid=pid)
+        return len(quitadas)
