@@ -5,7 +5,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from kernel.transaction_log import TransactionLog
-from processes.PCB import PCB, Estado, TransicionInvalida, TRANSICIONES
+from processes.pcb import PCB, Estado, TransicionInvalida, TRANSICIONES
 
 
 def nuevo_pcb(**kw):
