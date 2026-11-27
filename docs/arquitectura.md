@@ -21,12 +21,15 @@ Requisitos que condicionan el diseño:
 
 ```
 src/
-  kernel/       interrupts.py, transaction_log.py, reloj, configuración
+  kernel/       interrupts.py, transaction_log.py, clock.py (reloj), handlers.py (manejadores),
+                sistema.py (estado compartido), simulacion.py (construir), contratos.py (firmas),
+                stubs.py (módulos provisionales hasta que existan los reales)
   processes/    pcb.py, dispatcher.py, schedulers/ (fcfs, sjf, rr)
   memory/       paginación, mapa de frames, reemplazo (fifo, lru)
   metrics/      cálculo de métricas y línea de tiempo desde los eventos
   ui/           interfaz en vivo
   main.py       punto de entrada
+  demo_reloj.py demo del núcleo de punta a punta por consola
 docs/           arquitectura, manual de uso, cómo ejecutar, matriz de pruebas
 tests/          pruebas
 ```
@@ -41,20 +44,42 @@ tests/          pruebas
 
 Manejadores: `handler(tick, **payload)`. Registro: `controller.register(IntType.TIMER, handler)`.
 
+### 3.1 El reloj genera los eventos
+
+El **reloj** (`kernel/clock.py`) es el dueño del tiempo y levanta las interrupciones del sistema: `PROCESS_ARRIVAL`, `IO_REQUEST`, `IO_COMPLETE` (incluye la carga de páginas), `PROCESS_END` y `TIMER`. El scheduler solo decide quién usa la CPU. `PAGE_FAULT` la levanta la memoria dentro de `acceder()`; `SIGNAL` y `DIV_ZERO` vienen del escenario (`reloj.programar(tick, tipo, **payload)`).
+
+**Modelo de tiempo.** `avanzar()` procesa el instante `t` y deja la CPU trabajando durante [t, t+1). Los efectos de ese trabajo (fin de ráfaga, pedido de E/S, fin de quantum, fallo de página) quedan con tiempo `t+1` y se atienden al inicio del siguiente avance. Por eso un proceso que llega en 0 con ráfaga 3 tiene `fin = 3`.
+
+**Orden dentro de un avance:**
+
+1. Se levantan las llegadas del instante (`PROCESS_ARRIVAL`).
+2. Se levantan las interrupciones programadas por el escenario (señales, `DIV_ZERO`).
+3. Cuenta regresiva de las E/S y cargas de página en curso; al llegar a 0 se levanta `IO_COMPLETE`.
+4. `dispatch_all(t)` atiende todo lo pendiente por prioridad.
+5. Si la CPU está libre: `scheduler.siguiente()` y `dispatcher.despachar(...)`.
+6. Se registra el evento `TICK` y se suma 1 a `espera` de cada proceso LISTO.
+7. La CPU ejecuta un tick: consulta la memoria (`acceder`); si hay fallo, el tick se pierde; si no, baja `rafaga_restante` y levanta `PROCESS_END`, `IO_REQUEST` o `TIMER` según corresponda (en ese orden de preferencia).
+
+**Duración de una E/S.** Si una E/S de `d` ticks se atiende en el instante `t0`, `IO_COMPLETE` se atiende en `t0 + d`. Lo mismo vale para la carga de una página (`d` = costo de carga).
+
+**Referencias de página.** Regla provisional: en cada tick de CPU el proceso usa la página `consumido % paginas` (recorre sus páginas en ciclo). Está aislada en `Sistema.pagina_de()` para reemplazarla cuando los escenarios definan una secuencia de referencias.
+
+`ejecutar()` devuelve `TERMINADO` cuando todos los procesos terminaron, `ESTANCADO` cuando nada puede volver a cambiar (por ejemplo, solo quedan procesos SUSPENDIDOS) y `LIMITE` al llegar al máximo de ticks.
+
 ## 4. Interrupciones
 
 Número menor = mayor prioridad (prioridades acordadas por el grupo). Si llega una interrupción sin manejador registrado, queda en el log como `INT_SIN_MANEJADOR`.
 
 | Tipo | Nombre mostrado | Origen | Efecto principal |
 |------|-----------------|--------|------------------|
-| `DIV_ZERO` (1) | División entre cero | Proceso en ejecución | El proceso pasa a TERMINADO |
+| `DIV_ZERO` (1) | División entre cero | Escenario (error del proceso en ejecución) | El proceso pasa a TERMINADO |
 | `PAGE_FAULT` (2) | Fallo de página | Memoria | El proceso pasa a BLOQUEADO mientras se carga la página |
-| `IO_COMPLETE` (3) | Fin de E/S | Dispositivo (también carga de página) | El proceso pasa de BLOQUEADO a LISTO (si está SUSPENDIDO, sigue suspendido; ver 5.2) |
-| `IO_REQUEST` (4) | Solicitud de E/S | Proceso en ejecución | El proceso pasa a BLOQUEADO |
-| `PROCESS_END` (5) | Fin de proceso | CPU (ráfaga terminada) | El proceso pasa a TERMINADO y se libera su memoria |
+| `IO_COMPLETE` (3) | Fin de E/S | Reloj (termina la espera de E/S o de la carga de página) | El proceso pasa de BLOQUEADO a LISTO (si está SUSPENDIDO, sigue suspendido; ver 5.2) |
+| `IO_REQUEST` (4) | Solicitud de E/S | Reloj (el proceso llegó al tick de CPU de su `eventos_es`) | El proceso pasa a BLOQUEADO |
+| `PROCESS_END` (5) | Fin de proceso | Reloj (la ráfaga restante llegó a 0) | El proceso pasa a TERMINADO y se libera su memoria |
 | `TIMER` (6) | Fin de quantum | Reloj | Round Robin expulsa al proceso (EJECUCION a LISTO) |
-| `PROCESS_ARRIVAL` (7) | Llegada de proceso | Escenario | NUEVO a LISTO y se reevalúa el scheduler |
-| `SIGNAL` (8) | Señal | Usuario / escenario | `KILL`, `STOP`, `CONT` |
+| `PROCESS_ARRIVAL` (7) | Llegada de proceso | Reloj (llega el tick de llegada del escenario) | NUEVO a LISTO y se reevalúa el scheduler |
+| `SIGNAL` (8) | Señal | Usuario / escenario (`reloj.programar`) | `KILL`, `STOP`, `CONT` |
 
 ## 5. Procesos
 
@@ -99,8 +124,10 @@ El estado SUSPENDIDO queda incluido (acordado) para las señales `STOP` / `CONT`
 
 ### 5.3 Scheduler y dispatcher (roles separados)
 
-- **Scheduler**: *decide* qué proceso sigue. Interfaz común: `agregar(pcb)` y `siguiente()`.
-- **Dispatcher**: *ejecuta* el cambio. Guarda el contexto del proceso saliente, carga el del entrante, **incrementa el contador de cambios de contexto** y registra el evento `CAMBIO_CONTEXTO`.
+- **Scheduler**: *decide* qué proceso sigue y solo administra la cola de LISTOS. Interfaz común: `agregar(pcb)`, `siguiente()` (saca y devuelve el próximo, o `None`), `quitar(pid)` (lo usan `KILL` y `STOP`) y el atributo `quantum` (`None` = sin quantum; un entero = Round Robin, y el reloj levanta `TIMER` al consumirlo).
+- **Dispatcher**: *ejecuta* el cambio con `despachar(tick, saliente, entrante)`. Guarda el contexto del proceso saliente, carga el del entrante (LISTO a EJECUCION), **incrementa el contador de cambios de contexto** y registra el evento `CAMBIO_CONTEXTO`.
+
+Las firmas completas y las reglas de cada módulo están en [contratos.md](contratos.md) (y en `src/kernel/contratos.py`).
 
 Algoritmos: **FCFS**, **SJF** (no expropiativo; SRTF opcional si sobra tiempo) y **Round Robin** (quantum configurable).
 
@@ -124,16 +151,20 @@ El frame `i` ocupa las direcciones `[i*T, (i+1)*T - 1]`. El **mapa de frames** s
 API del gestor de memoria:
 
 ```python
-acceder(tick, pid, pagina)   # si la página no está cargada, levanta PAGE_FAULT
+acceder(tick, pid, pagina)   # True si la página está cargada; si no, asigna frame (reemplazando si hace falta), levanta PAGE_FAULT y devuelve False
 liberar(tick, pid)           # libera los frames del proceso (se llama al terminar)
 mapa_frames()                # lista de filas como la tabla anterior
 ```
+
+La memoria se crea con `Memoria(log, ic, procesos)` (`procesos` es el diccionario `pid -> PCB`). La memoria **no cambia el estado de los procesos ni cuenta el tiempo de carga**: ante un `PAGE_FAULT` el manejador del núcleo pasa el proceso a BLOQUEADO y el reloj levanta `IO_COMPLETE` a los `costo de carga` ticks.
 
 ## 7. Log estructurado
 
 Cada paso es un `Evento` con: `n`, `tick`, `componente`, `mensaje`, `evento` (tipo), `pid`, `antes`, `despues` y `datos`. La línea de texto se genera a partir del evento: `[#007 t=012] SCHED  P3 pasa de EJECUCION a LISTO`.
 
-Tipos de evento (lista inicial; se puede ampliar por Pull Request si hace falta): `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `ES_COMPLETADA_SUSPENDIDO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
+Tipos de evento (lista inicial; se puede ampliar por Pull Request si hace falta): `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `INT_IGNORADA`, `INT_DESCARTADA`, `CAMBIO_ESTADO`, `ES_COMPLETADA_SUSPENDIDO`, `CAMBIO_CONTEXTO`, `TICK`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
+
+`TICK` es una foto que deja el reloj en cada tick (`pid` = proceso en CPU, o `None`; `datos`: `listos`, `bloqueados`, `suspendidos`) y es la base de la línea de tiempo. `INT_IGNORADA` se registra cuando llega una interrupción que ya no aplica (por ejemplo un `TIMER` de un proceso que ya no está en la CPU); `INT_DESCARTADA`, cuando `KILL` retira interrupciones pendientes de un proceso.
 
 Nadie usa `print` directamente: todo pasa por `TransactionLog.log`. La UI y las métricas usan `log.subscribe(callback)` para recibir los eventos en vivo.
 
@@ -184,3 +215,5 @@ Mantener `docs/combinaciones.md`: para cada combinación (algoritmo x quantum x 
 - [x] Formato de escenarios: JSON
 - [x] Tecnología de la UI: Tkinter
 - [x] Varios procesadores: no por ahora (opcional, la CPU queda como objeto)
+- [x] El reloj genera todos los eventos del sistema (llegadas, E/S, fin de proceso, `TIMER`); el scheduler solo decide quién usa la CPU
+- [x] Firmas de scheduler, dispatcher y memoria en [contratos.md](contratos.md)
