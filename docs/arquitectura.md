@@ -49,7 +49,7 @@ Número menor = mayor prioridad (prioridades acordadas por el grupo). Si llega u
 |------|-----------------|--------|------------------|
 | `DIV_ZERO` (1) | División entre cero | Proceso en ejecución | El proceso pasa a TERMINADO |
 | `PAGE_FAULT` (2) | Fallo de página | Memoria | El proceso pasa a BLOQUEADO mientras se carga la página |
-| `IO_COMPLETE` (3) | Fin de E/S | Dispositivo (también carga de página) | El proceso pasa de BLOQUEADO a LISTO |
+| `IO_COMPLETE` (3) | Fin de E/S | Dispositivo (también carga de página) | El proceso pasa de BLOQUEADO a LISTO (si está SUSPENDIDO, sigue suspendido; ver 5.2) |
 | `IO_REQUEST` (4) | Solicitud de E/S | Proceso en ejecución | El proceso pasa a BLOQUEADO |
 | `PROCESS_END` (5) | Fin de proceso | CPU (ráfaga terminada) | El proceso pasa a TERMINADO y se libera su memoria |
 | `TIMER` (6) | Fin de quantum | Reloj | Round Robin expulsa al proceso (EJECUCION a LISTO) |
@@ -73,6 +73,7 @@ Número menor = mayor prioridad (prioridades acordadas por el grupo). Si llega u
 | `primera_ejecucion` | Tick en que corrió por primera vez (tiempo de respuesta) |
 | `fin` | Tick en que terminó |
 | `espera` | Tiempo acumulado en LISTO |
+| `espera_es` | `True` mientras el proceso aguarda una E/S o la carga de una página; permite decidir, al recibir `CONT`, si vuelve a BLOQUEADO o a LISTO |
 
 ### 5.2 Estados y transiciones
 
@@ -83,11 +84,18 @@ Número menor = mayor prioridad (prioridades acordadas por el grupo). Si llega u
 | EJECUCION a LISTO | `TIMER` (RR) o expropiación |
 | EJECUCION a BLOQUEADO | `IO_REQUEST` o `PAGE_FAULT` |
 | BLOQUEADO a LISTO | `IO_COMPLETE` |
-| EJECUCION a TERMINADO | `PROCESS_END`, `DIV_ZERO` o `SIGNAL KILL` |
-| LISTO o EJECUCION a SUSPENDIDO | `SIGNAL STOP` |
-| SUSPENDIDO a LISTO | `SIGNAL CONT` |
+| EJECUCION a TERMINADO | `PROCESS_END` o `DIV_ZERO` |
+| LISTO, EJECUCION o BLOQUEADO a SUSPENDIDO | `SIGNAL STOP` |
+| SUSPENDIDO a LISTO | `SIGNAL CONT` (la E/S ya terminó o no había E/S pendiente) |
+| SUSPENDIDO a BLOQUEADO | `SIGNAL CONT` (la E/S aún está pendiente) |
+| LISTO, EJECUCION, BLOQUEADO o SUSPENDIDO a TERMINADO | `SIGNAL KILL` |
 
-El estado SUSPENDIDO queda incluido (acordado) para las señales `STOP` / `CONT`.
+El estado SUSPENDIDO queda incluido (acordado) para las señales `STOP` / `CONT`. Reglas de las señales, como en un sistema operativo real:
+
+- **`KILL`** puede llegar en cualquier estado que no sea NUEVO ni TERMINADO. Al matar un proceso se libera su memoria y se descarta cualquier `IO_COMPLETE` o `PROCESS_END` que tuviera pendiente.
+- **`STOP`** sobre un proceso BLOQUEADO lo pasa a SUSPENDIDO, pero su E/S sigue pendiente (`espera_es = True`).
+- Si el `IO_COMPLETE` llega estando el proceso SUSPENDIDO, **no lo reanuda**: solo marca la E/S como terminada (evento `ES_COMPLETADA_SUSPENDIDO`) y el proceso sigue suspendido hasta recibir `CONT`.
+- Una transición que no esté en esta tabla lanza `TransicionInvalida` y no modifica el PCB ni el log.
 
 ### 5.3 Scheduler y dispatcher (roles separados)
 
@@ -125,7 +133,7 @@ mapa_frames()                # lista de filas como la tabla anterior
 
 Cada paso es un `Evento` con: `n`, `tick`, `componente`, `mensaje`, `evento` (tipo), `pid`, `antes`, `despues` y `datos`. La línea de texto se genera a partir del evento: `[#007 t=012] SCHED  P3 pasa de EJECUCION a LISTO`.
 
-Tipos de evento (lista inicial; se puede ampliar por Pull Request si hace falta): `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
+Tipos de evento (lista inicial; se puede ampliar por Pull Request si hace falta): `INT_ENCOLADA`, `INT_ATENDIDA`, `INT_SIN_MANEJADOR`, `CAMBIO_ESTADO`, `ES_COMPLETADA_SUSPENDIDO`, `CAMBIO_CONTEXTO`, `FRAME_ASIGNADO`, `FRAME_LIBERADO`, `REEMPLAZO_PAGINA`.
 
 Nadie usa `print` directamente: todo pasa por `TransactionLog.log`. La UI y las métricas usan `log.subscribe(callback)` para recibir los eventos en vivo.
 
